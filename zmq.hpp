@@ -34,18 +34,16 @@
 #define ZMQ_DEPRECATED(msg) __attribute__((deprecated(msg)))
 #endif
 
-#if (__cplusplus >= 201103L)
+#if (__cplusplus >= 201103L) || (defined(_MSC_VER) && (_MSC_VER >= 1900))
 #define ZMQ_CPP11
 #define ZMQ_NOTHROW noexcept
 #define ZMQ_EXPLICIT explicit
-#elif (defined(_MSC_VER) && (_MSC_VER >= 1900))
-#define ZMQ_CPP11
-#define ZMQ_NOTHROW noexcept
-#define ZMQ_EXPLICIT explicit
+#define ZMQ_OVERRIDE override
 #else
 #define ZMQ_CPP03
 #define ZMQ_NOTHROW
 #define ZMQ_EXPLICIT
+#define ZMQ_OVERRIDE
 #endif
 
 #include <zmq.h>
@@ -63,8 +61,8 @@
 
 /*  Version macros for compile-time API version detection                     */
 #define CPPZMQ_VERSION_MAJOR 4
-#define CPPZMQ_VERSION_MINOR 4 
-#define CPPZMQ_VERSION_PATCH 0
+#define CPPZMQ_VERSION_MINOR 3 
+#define CPPZMQ_VERSION_PATCH 1 
 
 #define CPPZMQ_VERSION                                                              \
     ZMQ_MAKE_VERSION(CPPZMQ_VERSION_MAJOR, CPPZMQ_VERSION_MINOR,                    \
@@ -264,7 +262,7 @@ class message_t
 
 #if defined(ZMQ_BUILD_DRAFT_API) && defined(ZMQ_CPP11)
     template<typename T>
-    message_t(const T &msg_) : message_t(std::begin(msg_), std::end(msg_))
+    explicit message_t(const T &msg_) : message_t(std::begin(msg_), std::end(msg_))
     {
     }
 #endif
@@ -524,7 +522,11 @@ class context_t
         if (ptr == NULL)
             return;
 
-        int rc = zmq_ctx_destroy(ptr);
+        int rc;
+        do {
+            rc = zmq_ctx_destroy(ptr);
+        } while (rc == -1 && errno == EINTR);
+
         ZMQ_ASSERT(rc == 0);
         ptr = NULL;
     }
