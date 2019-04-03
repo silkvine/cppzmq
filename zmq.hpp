@@ -39,11 +39,13 @@
 #define ZMQ_NOTHROW noexcept
 #define ZMQ_EXPLICIT explicit
 #define ZMQ_OVERRIDE override
+#define ZMQ_NULLPTR nullptr
 #else
 #define ZMQ_CPP03
-#define ZMQ_NOTHROW
+#define ZMQ_NOTHROW throw()
 #define ZMQ_EXPLICIT
 #define ZMQ_OVERRIDE
+#define ZMQ_NULLPTR 0
 #endif
 
 #include <zmq.h>
@@ -61,8 +63,8 @@
 
 /*  Version macros for compile-time API version detection                     */
 #define CPPZMQ_VERSION_MAJOR 4
-#define CPPZMQ_VERSION_MINOR 3 
-#define CPPZMQ_VERSION_PATCH 1 
+#define CPPZMQ_VERSION_MINOR 3
+#define CPPZMQ_VERSION_PATCH 1
 
 #define CPPZMQ_VERSION                                                              \
     ZMQ_MAKE_VERSION(CPPZMQ_VERSION_MAJOR, CPPZMQ_VERSION_MINOR,                    \
@@ -138,62 +140,66 @@ class error_t : public std::exception
 {
   public:
     error_t() : errnum(zmq_errno()) {}
-#ifdef ZMQ_CPP11
-    virtual const char *what() const noexcept { return zmq_strerror(errnum); }
-#else
-    virtual const char *what() const throw() { return zmq_strerror(errnum); }
-#endif
+    virtual const char *what() const ZMQ_NOTHROW ZMQ_OVERRIDE { return zmq_strerror(errnum); }
     int num() const { return errnum; }
 
   private:
     int errnum;
 };
 
-inline int poll(zmq_pollitem_t const *items_, size_t nitems_, long timeout_ = -1)
+inline int poll(zmq_pollitem_t *items_, size_t nitems_, long timeout_ = -1)
 {
-    int rc = zmq_poll(const_cast<zmq_pollitem_t *>(items_),
-                      static_cast<int>(nitems_), timeout_);
+    int rc = zmq_poll(items_, static_cast<int>(nitems_), timeout_);
     if (rc < 0)
         throw error_t();
     return rc;
 }
 
+ZMQ_DEPRECATED("from 4.3.1, use poll taking non-const items")
+inline int poll(zmq_pollitem_t const *items_, size_t nitems_, long timeout_ = -1)
+{
+    return poll(const_cast<zmq_pollitem_t *>(items_), nitems_, timeout_);
+}
+
 #ifdef ZMQ_CPP11
+ZMQ_DEPRECATED("from 4.3.1, use poll taking non-const items")
 inline int
 poll(zmq_pollitem_t const *items, size_t nitems, std::chrono::milliseconds timeout)
+{
+    return poll(const_cast<zmq_pollitem_t *>(items), nitems, static_cast<long>(timeout.count()));
+}
+
+ZMQ_DEPRECATED("from 4.3.1, use poll taking non-const items")
+inline int poll(std::vector<zmq_pollitem_t> const &items,
+                std::chrono::milliseconds timeout)
+{
+    return poll(const_cast<zmq_pollitem_t *>(items.data()), items.size(), static_cast<long>(timeout.count()));
+}
+
+ZMQ_DEPRECATED("from 4.3.1, use poll taking non-const items")
+inline int poll(std::vector<zmq_pollitem_t> const &items, long timeout_ = -1)
+{
+    return poll(const_cast<zmq_pollitem_t *>(items.data()), items.size(), timeout_);
+}
+
+inline int
+poll(zmq_pollitem_t *items, size_t nitems, std::chrono::milliseconds timeout)
 {
     return poll(items, nitems, static_cast<long>(timeout.count()));
 }
 
-inline int poll(std::vector<zmq_pollitem_t> const &items,
+inline int poll(std::vector<zmq_pollitem_t> &items,
                 std::chrono::milliseconds timeout)
 {
     return poll(items.data(), items.size(), static_cast<long>(timeout.count()));
 }
 
-inline int poll(std::vector<zmq_pollitem_t> const &items, long timeout_ = -1)
+inline int poll(std::vector<zmq_pollitem_t> &items, long timeout_ = -1)
 {
     return poll(items.data(), items.size(), timeout_);
 }
 #endif
 
-
-inline void proxy(void *frontend, void *backend, void *capture)
-{
-    int rc = zmq_proxy(frontend, backend, capture);
-    if (rc != 0)
-        throw error_t();
-}
-
-#ifdef ZMQ_HAS_PROXY_STEERABLE
-inline void
-proxy_steerable(void *frontend, void *backend, void *capture, void *control)
-{
-    int rc = zmq_proxy_steerable(frontend, backend, capture, control);
-    if (rc != 0)
-        throw error_t();
-}
-#endif
 
 inline void version(int *major_, int *minor_, int *patch_)
 {
@@ -214,14 +220,14 @@ class message_t
     friend class socket_t;
 
   public:
-    inline message_t()
+    message_t()
     {
         int rc = zmq_msg_init(&msg);
         if (rc != 0)
             throw error_t();
     }
 
-    inline explicit message_t(size_t size_)
+    explicit message_t(size_t size_)
     {
         int rc = zmq_msg_init_size(&msg, size_);
         if (rc != 0)
@@ -245,7 +251,7 @@ class message_t
         }
     }
 
-    inline message_t(const void *data_, size_t size_)
+    message_t(const void *data_, size_t size_)
     {
         int rc = zmq_msg_init_size(&msg, size_);
         if (rc != 0)
@@ -253,7 +259,7 @@ class message_t
         memcpy(data(), data_, size_);
     }
 
-    inline message_t(void *data_, size_t size_, free_fn *ffn_, void *hint_ = NULL)
+    message_t(void *data_, size_t size_, free_fn *ffn_, void *hint_ = ZMQ_NULLPTR)
     {
         int rc = zmq_msg_init_data(&msg, data_, size_, ffn_, hint_);
         if (rc != 0)
@@ -268,27 +274,27 @@ class message_t
 #endif
 
 #ifdef ZMQ_HAS_RVALUE_REFS
-    inline message_t(message_t &&rhs) : msg(rhs.msg)
+    message_t(message_t &&rhs) : msg(rhs.msg)
     {
         int rc = zmq_msg_init(&rhs.msg);
         if (rc != 0)
             throw error_t();
     }
 
-    inline message_t &operator=(message_t &&rhs) ZMQ_NOTHROW
+    message_t &operator=(message_t &&rhs) ZMQ_NOTHROW
     {
         std::swap(msg, rhs.msg);
         return *this;
     }
 #endif
 
-    inline ~message_t() ZMQ_NOTHROW
+    ~message_t() ZMQ_NOTHROW
     {
         int rc = zmq_msg_close(&msg);
         ZMQ_ASSERT(rc == 0);
     }
 
-    inline void rebuild()
+    void rebuild()
     {
         int rc = zmq_msg_close(&msg);
         if (rc != 0)
@@ -298,7 +304,7 @@ class message_t
             throw error_t();
     }
 
-    inline void rebuild(size_t size_)
+    void rebuild(size_t size_)
     {
         int rc = zmq_msg_close(&msg);
         if (rc != 0)
@@ -308,7 +314,7 @@ class message_t
             throw error_t();
     }
 
-    inline void rebuild(const void *data_, size_t size_)
+    void rebuild(const void *data_, size_t size_)
     {
         int rc = zmq_msg_close(&msg);
         if (rc != 0)
@@ -319,7 +325,7 @@ class message_t
         memcpy(data(), data_, size_);
     }
 
-    inline void rebuild(void *data_, size_t size_, free_fn *ffn_, void *hint_ = NULL)
+    void rebuild(void *data_, size_t size_, free_fn *ffn_, void *hint_ = ZMQ_NULLPTR)
     {
         int rc = zmq_msg_close(&msg);
         if (rc != 0)
@@ -329,34 +335,34 @@ class message_t
             throw error_t();
     }
 
-    inline void move(message_t const *msg_)
+    void move(message_t const *msg_)
     {
         int rc = zmq_msg_move(&msg, const_cast<zmq_msg_t *>(&(msg_->msg)));
         if (rc != 0)
             throw error_t();
     }
 
-    inline void copy(message_t const *msg_)
+    void copy(message_t const *msg_)
     {
         int rc = zmq_msg_copy(&msg, const_cast<zmq_msg_t *>(&(msg_->msg)));
         if (rc != 0)
             throw error_t();
     }
 
-    inline bool more() const ZMQ_NOTHROW
+    bool more() const ZMQ_NOTHROW
     {
         int rc = zmq_msg_more(const_cast<zmq_msg_t *>(&msg));
         return rc != 0;
     }
 
-    inline void *data() ZMQ_NOTHROW { return zmq_msg_data(&msg); }
+    void *data() ZMQ_NOTHROW { return zmq_msg_data(&msg); }
 
-    inline const void *data() const ZMQ_NOTHROW
+    const void *data() const ZMQ_NOTHROW
     {
         return zmq_msg_data(const_cast<zmq_msg_t *>(&msg));
     }
 
-    inline size_t size() const ZMQ_NOTHROW
+    size_t size() const ZMQ_NOTHROW
     {
         return zmq_msg_size(const_cast<zmq_msg_t *>(&msg));
     }
@@ -369,51 +375,61 @@ class message_t
     }
 
     ZMQ_DEPRECATED("from 4.3.0, use operator== instead")
-    inline bool equal(const message_t *other) const ZMQ_NOTHROW
+    bool equal(const message_t *other) const ZMQ_NOTHROW
     {
         return *this == *other;
     }
 
-    inline bool operator==(const message_t &other) const ZMQ_NOTHROW
+    bool operator==(const message_t &other) const ZMQ_NOTHROW
     {
         const size_t my_size = size();
         return my_size == other.size() && 0 == memcmp(data(), other.data(), my_size);
     }
 
-    inline bool operator!=(const message_t &other) const ZMQ_NOTHROW
+    bool operator!=(const message_t &other) const ZMQ_NOTHROW
     {
         return !(*this == other);
     }
 
+#if ZMQ_VERSION >= ZMQ_MAKE_VERSION(3, 2, 0)
+    int get(int property_)
+    {
+        int value = zmq_msg_get(&msg, property_);
+        if (value == -1)
+            throw error_t();
+        return value;
+    }
+#endif
+
 #if ZMQ_VERSION >= ZMQ_MAKE_VERSION(4, 1, 0)
-    inline const char *gets(const char *property_)
+    const char *gets(const char *property_)
     {
         const char *value = zmq_msg_gets(&msg, property_);
-        if (value == NULL)
+        if (value == ZMQ_NULLPTR)
             throw error_t();
         return value;
     }
 #endif
 
 #if defined(ZMQ_BUILD_DRAFT_API) && ZMQ_VERSION >= ZMQ_MAKE_VERSION(4, 2, 0)
-    inline uint32_t routing_id() const
+    uint32_t routing_id() const
     {
         return zmq_msg_routing_id(const_cast<zmq_msg_t*>(&msg));
     }
 
-    inline void set_routing_id(uint32_t routing_id)
+    void set_routing_id(uint32_t routing_id)
     {
         int rc = zmq_msg_set_routing_id(&msg, routing_id);
         if (rc != 0)
             throw error_t();
     }
 
-    inline const char* group() const
+    const char* group() const
     {
         return zmq_msg_group(const_cast<zmq_msg_t*>(&msg));
     }
 
-    inline void set_group(const char* group)
+    void set_group(const char* group)
     {
         int rc = zmq_msg_set_group(&msg, group);
         if (rc != 0)
@@ -424,7 +440,7 @@ class message_t
     /** Dump content to string. Ascii chars are readable, the rest is printed as hex.
          *  Probably ridiculously slow.
          */
-    inline std::string str() const
+    std::string str() const
     {
         // Partly mutuated from the same method in zmq::multipart_t
         std::stringstream os;
@@ -472,22 +488,20 @@ class message_t
 
 class context_t
 {
-    friend class socket_t;
-
   public:
-    inline context_t()
+    context_t()
     {
         ptr = zmq_ctx_new();
-        if (ptr == NULL)
+        if (ptr == ZMQ_NULLPTR)
             throw error_t();
     }
 
 
-    inline explicit context_t(int io_threads_,
+    explicit context_t(int io_threads_,
                               int max_sockets_ = ZMQ_MAX_SOCKETS_DFLT)
     {
         ptr = zmq_ctx_new();
-        if (ptr == NULL)
+        if (ptr == ZMQ_NULLPTR)
             throw error_t();
 
         int rc = zmq_ctx_set(ptr, ZMQ_IO_THREADS, io_threads_);
@@ -498,28 +512,28 @@ class context_t
     }
 
 #ifdef ZMQ_HAS_RVALUE_REFS
-    inline context_t(context_t &&rhs) ZMQ_NOTHROW : ptr(rhs.ptr) { rhs.ptr = NULL; }
-    inline context_t &operator=(context_t &&rhs) ZMQ_NOTHROW
+    context_t(context_t &&rhs) ZMQ_NOTHROW : ptr(rhs.ptr) { rhs.ptr = ZMQ_NULLPTR; }
+    context_t &operator=(context_t &&rhs) ZMQ_NOTHROW
     {
         std::swap(ptr, rhs.ptr);
         return *this;
     }
 #endif
 
-    inline int setctxopt(int option_, int optval_)
+    int setctxopt(int option_, int optval_)
     {
         int rc = zmq_ctx_set(ptr, option_, optval_);
         ZMQ_ASSERT(rc == 0);
         return rc;
     }
 
-    inline int getctxopt(int option_) { return zmq_ctx_get(ptr, option_); }
+    int getctxopt(int option_) { return zmq_ctx_get(ptr, option_); }
 
-    inline ~context_t() ZMQ_NOTHROW { close(); }
+    ~context_t() ZMQ_NOTHROW { close(); }
 
-    inline void close() ZMQ_NOTHROW
+    void close() ZMQ_NOTHROW
     {
-        if (ptr == NULL)
+        if (ptr == ZMQ_NULLPTR)
             return;
 
         int rc;
@@ -528,17 +542,17 @@ class context_t
         } while (rc == -1 && errno == EINTR);
 
         ZMQ_ASSERT(rc == 0);
-        ptr = NULL;
+        ptr = ZMQ_NULLPTR;
     }
 
     //  Be careful with this, it's probably only useful for
     //  using the C api together with an existing C++ api.
     //  Normally you should never need to use this.
-    inline ZMQ_EXPLICIT operator void *() ZMQ_NOTHROW { return ptr; }
+    ZMQ_EXPLICIT operator void *() ZMQ_NOTHROW { return ptr; }
 
-    inline ZMQ_EXPLICIT operator void const *() const ZMQ_NOTHROW { return ptr; }
+    ZMQ_EXPLICIT operator void const *() const ZMQ_NOTHROW { return ptr; }
 
-    inline operator bool() const ZMQ_NOTHROW { return ptr != NULL; }
+    operator bool() const ZMQ_NOTHROW { return ptr != ZMQ_NULLPTR; }
 
   private:
     void *ptr;
@@ -578,42 +592,48 @@ class socket_t
     friend class monitor_t;
 
   public:
-    inline socket_t(context_t &context_, int type_) { init(context_, type_); }
+    socket_t(context_t &context_, int type_)
+        : ptr(zmq_socket(static_cast<void*>(context_), type_))
+        , ctxptr(static_cast<void*>(context_))
+    {
+        if (ptr == ZMQ_NULLPTR)
+            throw error_t();
+    }
 
 #ifdef ZMQ_CPP11
-    inline socket_t(context_t &context_, socket_type type_)
+    socket_t(context_t &context_, socket_type type_)
+        : socket_t(context_, static_cast<int>(type_))
     {
-        init(context_, static_cast<int>(type_));
     }
 #endif
 
 #ifdef ZMQ_HAS_RVALUE_REFS
-    inline socket_t(socket_t &&rhs) ZMQ_NOTHROW : ptr(rhs.ptr), ctxptr(rhs.ctxptr)
+    socket_t(socket_t &&rhs) ZMQ_NOTHROW : ptr(rhs.ptr), ctxptr(rhs.ctxptr)
     {
-        rhs.ptr = NULL;
-        rhs.ctxptr = NULL;
+        rhs.ptr = ZMQ_NULLPTR;
+        rhs.ctxptr = ZMQ_NULLPTR;
     }
-    inline socket_t &operator=(socket_t &&rhs) ZMQ_NOTHROW
+    socket_t &operator=(socket_t &&rhs) ZMQ_NOTHROW
     {
         std::swap(ptr, rhs.ptr);
         return *this;
     }
 #endif
 
-    inline ~socket_t() ZMQ_NOTHROW { close(); }
+    ~socket_t() ZMQ_NOTHROW { close(); }
 
-    inline operator void *() ZMQ_NOTHROW { return ptr; }
+    operator void *() ZMQ_NOTHROW { return ptr; }
 
-    inline operator void const *() const ZMQ_NOTHROW { return ptr; }
+    operator void const *() const ZMQ_NOTHROW { return ptr; }
 
-    inline void close() ZMQ_NOTHROW
+    void close() ZMQ_NOTHROW
     {
-        if (ptr == NULL)
+        if (ptr == ZMQ_NULLPTR)
             // already closed
             return;
         int rc = zmq_close(ptr);
         ZMQ_ASSERT(rc == 0);
-        ptr = 0;
+        ptr = ZMQ_NULLPTR;
     }
 
     template<typename T> void setsockopt(int option_, T const &optval)
@@ -621,14 +641,14 @@ class socket_t
         setsockopt(option_, &optval, sizeof(T));
     }
 
-    inline void setsockopt(int option_, const void *optval_, size_t optvallen_)
+    void setsockopt(int option_, const void *optval_, size_t optvallen_)
     {
         int rc = zmq_setsockopt(ptr, option_, optval_, optvallen_);
         if (rc != 0)
             throw error_t();
     }
 
-    inline void getsockopt(int option_, void *optval_, size_t *optvallen_) const
+    void getsockopt(int option_, void *optval_, size_t *optvallen_) const
     {
         int rc = zmq_getsockopt(ptr, option_, optval_, optvallen_);
         if (rc != 0)
@@ -643,45 +663,45 @@ class socket_t
         return optval;
     }
 
-    inline void bind(std::string const &addr) { bind(addr.c_str()); }
+    void bind(std::string const &addr) { bind(addr.c_str()); }
 
-    inline void bind(const char *addr_)
+    void bind(const char *addr_)
     {
         int rc = zmq_bind(ptr, addr_);
         if (rc != 0)
             throw error_t();
     }
 
-    inline void unbind(std::string const &addr) { unbind(addr.c_str()); }
+    void unbind(std::string const &addr) { unbind(addr.c_str()); }
 
-    inline void unbind(const char *addr_)
+    void unbind(const char *addr_)
     {
         int rc = zmq_unbind(ptr, addr_);
         if (rc != 0)
             throw error_t();
     }
 
-    inline void connect(std::string const &addr) { connect(addr.c_str()); }
+    void connect(std::string const &addr) { connect(addr.c_str()); }
 
-    inline void connect(const char *addr_)
+    void connect(const char *addr_)
     {
         int rc = zmq_connect(ptr, addr_);
         if (rc != 0)
             throw error_t();
     }
 
-    inline void disconnect(std::string const &addr) { disconnect(addr.c_str()); }
+    void disconnect(std::string const &addr) { disconnect(addr.c_str()); }
 
-    inline void disconnect(const char *addr_)
+    void disconnect(const char *addr_)
     {
         int rc = zmq_disconnect(ptr, addr_);
         if (rc != 0)
             throw error_t();
     }
 
-    inline bool connected() const ZMQ_NOTHROW { return (ptr != NULL); }
+    bool connected() const ZMQ_NOTHROW { return (ptr != ZMQ_NULLPTR); }
 
-    inline size_t send(const void *buf_, size_t len_, int flags_ = 0)
+    size_t send(const void *buf_, size_t len_, int flags_ = 0)
     {
         int nbytes = zmq_send(ptr, buf_, len_, flags_);
         if (nbytes >= 0)
@@ -691,7 +711,7 @@ class socket_t
         throw error_t();
     }
 
-    inline bool send(message_t &msg_, int flags_ = 0)
+    bool send(message_t &msg_, int flags_ = 0)
     {
         int nbytes = zmq_msg_send(&(msg_.msg), ptr, flags_);
         if (nbytes >= 0)
@@ -708,10 +728,10 @@ class socket_t
     }
 
 #ifdef ZMQ_HAS_RVALUE_REFS
-    inline bool send(message_t &&msg_, int flags_ = 0) { return send(msg_, flags_); }
+    bool send(message_t &&msg_, int flags_ = 0) { return send(msg_, flags_); }
 #endif
 
-    inline size_t recv(void *buf_, size_t len_, int flags_ = 0)
+    size_t recv(void *buf_, size_t len_, int flags_ = 0)
     {
         int nbytes = zmq_recv(ptr, buf_, len_, flags_);
         if (nbytes >= 0)
@@ -721,7 +741,7 @@ class socket_t
         throw error_t();
     }
 
-    inline bool recv(message_t *msg_, int flags_ = 0)
+    bool recv(message_t *msg_, int flags_ = 0)
     {
         int nbytes = zmq_msg_recv(&(msg_->msg), ptr, flags_);
         if (nbytes >= 0)
@@ -732,14 +752,14 @@ class socket_t
     }
 
 #if defined(ZMQ_BUILD_DRAFT_API) && ZMQ_VERSION >= ZMQ_MAKE_VERSION(4, 2, 0)
-    inline void join(const char* group)
+    void join(const char* group)
     {
         int rc = zmq_join(ptr, group);
         if (rc != 0)
             throw error_t();
     }
 
-    inline void leave(const char* group)
+    void leave(const char* group)
     {
         int rc = zmq_leave(ptr, group);
         if (rc != 0)
@@ -748,14 +768,6 @@ class socket_t
 #endif
 
   private:
-    inline void init(context_t &context_, int type_)
-    {
-        ctxptr = context_.ptr;
-        ptr = zmq_socket(context_.ptr, type_);
-        if (ptr == NULL)
-            throw error_t();
-    }
-
     void *ptr;
     void *ctxptr;
 
@@ -763,15 +775,54 @@ class socket_t
     void operator=(const socket_t &) ZMQ_DELETED_FUNCTION;
 };
 
+ZMQ_DEPRECATED("from 4.3.1, use proxy taking socket_t objects")
+inline void proxy(void *frontend, void *backend, void *capture)
+{
+    int rc = zmq_proxy(frontend, backend, capture);
+    if (rc != 0)
+        throw error_t();
+}
+
+inline void proxy(socket_t &frontend, socket_t &backend, socket_t *capture = ZMQ_NULLPTR)
+{
+    int rc = zmq_proxy(static_cast<void *>(frontend),
+                       static_cast<void *>(backend),
+                       capture ? static_cast<void *>(*capture) : ZMQ_NULLPTR);
+    if (rc != 0)
+       throw error_t();
+}
+
+#ifdef ZMQ_HAS_PROXY_STEERABLE
+ZMQ_DEPRECATED("from 4.3.1, use proxy_steerable taking socket_t objects")
+inline void
+proxy_steerable(void *frontend, void *backend, void *capture, void *control)
+{
+    int rc = zmq_proxy_steerable(frontend, backend, capture, control);
+    if (rc != 0)
+        throw error_t();
+}
+
+inline void
+proxy_steerable(socket_t &frontend, socket_t &backend, socket_t *capture, socket_t *control)
+{
+    int rc = zmq_proxy_steerable(static_cast<void *>(frontend),
+                                 static_cast<void *>(backend),
+                                 capture ? static_cast<void *>(*capture) : ZMQ_NULLPTR,
+                                 control ? static_cast<void *>(*control) : ZMQ_NULLPTR);
+    if (rc != 0)
+        throw error_t();
+}
+#endif
+
 class monitor_t
 {
   public:
-    monitor_t() : socketPtr(NULL), monitor_socket(NULL) {}
+    monitor_t() : socketPtr(ZMQ_NULLPTR), monitor_socket(ZMQ_NULLPTR) {}
 
     virtual ~monitor_t()
     {
         if (socketPtr)
-            zmq_socket_monitor(socketPtr, NULL, 0);
+            zmq_socket_monitor(socketPtr, ZMQ_NULLPTR, 0);
 
         if (monitor_socket)
             zmq_close(monitor_socket);
@@ -782,8 +833,8 @@ class monitor_t
     monitor_t(monitor_t &&rhs) ZMQ_NOTHROW : socketPtr(rhs.socketPtr),
                                              monitor_socket(rhs.monitor_socket)
     {
-        rhs.socketPtr = NULL;
-        rhs.monitor_socket = NULL;
+        rhs.socketPtr = ZMQ_NULLPTR;
+        rhs.monitor_socket = ZMQ_NULLPTR;
     }
 
     socket_t &operator=(socket_t &&rhs) ZMQ_DELETED_FUNCTION;
@@ -953,9 +1004,9 @@ class monitor_t
     void abort()
     {
         if (socketPtr)
-            zmq_socket_monitor(socketPtr, NULL, 0);
+            zmq_socket_monitor(socketPtr, ZMQ_NULLPTR, 0);
 
-        socketPtr = NULL;
+        socketPtr = ZMQ_NULLPTR;
     }
 #endif
     virtual void on_monitor_started() {}
